@@ -2,6 +2,7 @@ services:
   - type: web
     name: pqc-document-auth
     env: python
+    plan: free
     buildCommand: "./build.sh"
     startCommand: "gunicorn wsgi:app"
     envVars:
@@ -16,5 +17,6 @@ services:
     
 databases:
   - name: pqc-db
+    plan: free
     databaseName: pqc_signatures
     user: pqc_user
