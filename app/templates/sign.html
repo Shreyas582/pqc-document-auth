@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Sign Document - PQC Document Authentication{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-10 mx-auto">
+        <h2 class="mb-4">📝 Sign Document</h2>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Step 1: Generate or Use Keypair</h5>
+                
+                <div class="mb-3">
+                    <label for="paramSet" class="form-label">FAEST Parameter Set</label>
+                    <select class="form-select" id="paramSet">
+                        {% for ps in param_sets %}
+                        <option value="{{ ps }}" {% if ps == '128f' %}selected{% endif %}>
+                            {{ ps }} - {{ param_set_info[ps]['security'] }} - {{ "{:,}".format(param_set_info[ps]['sig_size']) }} bytes ({{ param_set_info[ps]['type'] }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <button type="button" class="btn btn-primary" id="generateKeypair">
+                    <span id="generateSpinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    Generate New Keypair
+                </button>
+
+                <div id="keypairResult" class="mt-3 d-none">
+                    <div class="alert alert-success">
+                        <strong>✓ Keypair Generated!</strong>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="publicKey" class="form-label">Public Key (hex)</label>
+                        <textarea class="form-control font-monospace" id="publicKey" rows="2" readonly></textarea>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="copyToClipboard('publicKey')">Copy</button>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="privateKey" class="form-label">Private Key (hex) - Keep this secret!</label>
+                        <textarea class="form-control font-monospace" id="privateKey" rows="2" readonly></textarea>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="copyToClipboard('privateKey')">Copy</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Step 2: Upload and Sign Document</h5>
+                
+                <form id="signForm" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="fileInput" class="form-label">Select Document</label>
+                        <input class="form-control" type="file" id="fileInput" required>
+                        <small class="text-muted">Supported: PDF, images, text files (max 16 MB)</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="privateKeyInput" class="form-label">Private Key (hex)</label>
+                        <textarea class="form-control font-monospace" id="privateKeyInput" rows="2" required placeholder="Paste private key here or generate above"></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-lg" id="signButton">
+                        <span id="signSpinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+                        Sign Document
+                    </button>
+                </form>
+
+                <div id="signResult" class="mt-4 d-none">
+                    <div class="alert alert-success">
+                        <h5>✓ Document Signed Successfully!</h5>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h6>Performance Metrics</h6>
+                                    <p class="mb-1"><strong>Signing Time:</strong> <span id="signingTime"></span> ms</p>
+                                    <p class="mb-1"><strong>Signature Size:</strong> <span id="signatureSize"></span> bytes</p>
+                                    <p class="mb-0"><strong>Parameter Set:</strong> <span id="usedParamSet"></span></p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h6>Document Info</h6>
+                                    <p class="mb-0"><strong>SHA-256:</strong></p>
+                                    <p class="font-monospace small" id="documentHash"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label for="signatureOutput" class="form-label">Signature (hex)</label>
+                        <textarea class="form-control font-monospace" id="signatureOutput" rows="4" readonly></textarea>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="copyToClipboard('signatureOutput')">Copy Signature</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary mt-1" onclick="downloadSignature()">Download Signature File</button>
+                    </div>
+                </div>
+
+                <div id="errorResult" class="mt-3 d-none">
+                    <div class="alert alert-danger" id="errorMessage"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentSignature = null;
+
+document.getElementById('generateKeypair').addEventListener('click', async () => {
+    const btn = document.getElementById('generateKeypair');
+    const spinner = document.getElementById('generateSpinner');
+    const paramSet = document.getElementById('paramSet').value;
+    
+    btn.disabled = true;
+    spinner.classList.remove('d-none');
+    
+    try {
+        const response = await fetch('/api/keypair', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({param_set: paramSet})
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            document.getElementById('publicKey').value = data.public_key;
+            document.getElementById('privateKey').value = data.private_key;
+            document.getElementById('privateKeyInput').value = data.private_key;
+            document.getElementById('keypairResult').classList.remove('d-none');
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        alert('Error generating keypair: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('d-none');
+    }
+});
+
+document.getElementById('signForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const btn = document.getElementById('signButton');
+    const spinner = document.getElementById('signSpinner');
+    const fileInput = document.getElementById('fileInput');
+    const privateKey = document.getElementById('privateKeyInput').value;
+    const paramSet = document.getElementById('paramSet').value;
+    const publicKey = document.getElementById('publicKey').value;
+    
+    btn.disabled = true;
+    spinner.classList.remove('d-none');
+    document.getElementById('signResult').classList.add('d-none');
+    document.getElementById('errorResult').classList.add('d-none');
+    
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('private_key', privateKey);
+    formData.append('param_set', paramSet);
+    formData.append('public_key', publicKey);
+    
+    try {
+        const response = await fetch('/api/sign', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            currentSignature = data;
+            document.getElementById('signingTime').textContent = data.signing_time_ms;
+            document.getElementById('signatureSize').textContent = data.signature_size.toLocaleString();
+            document.getElementById('usedParamSet').textContent = data.param_set;
+            document.getElementById('documentHash').textContent = data.document_hash;
+            document.getElementById('signatureOutput').value = data.signature;
+            document.getElementById('signResult').classList.remove('d-none');
+        } else {
+            document.getElementById('errorMessage').textContent = data.error;
+            document.getElementById('errorResult').classList.remove('d-none');
+        }
+    } catch (error) {
+        document.getElementById('errorMessage').textContent = 'Error: ' + error.message;
+        document.getElementById('errorResult').classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('d-none');
+    }
+});
+
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    element.select();
+    document.execCommand('copy');
+    
+    const btn = event.target;
+    const originalText = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = originalText, 2000);
+}
+
+function downloadSignature() {
+    if (!currentSignature) return;
+    
+    const data = JSON.stringify(currentSignature, null, 2);
+    const blob = new Blob([data], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'signature.json';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}
